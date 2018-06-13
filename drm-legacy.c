@@ -24,10 +24,76 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/select.h>
 
 #include "common.h"
 #include "drm-common.h"
+
+#if USE_KQUEUE
+#include <sys/event.h>
+
+static int kq;
+
+static int init_wait(int fd)
+{
+	struct kevent ke[2];
+
+	kq = kqueue();
+	if (kq == -1) {
+		fprintf(stderr, "Failed to create kqueue\n");
+		return -1;
+	}
+	EV_SET(&ke[0], fileno(stdin), EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0, NULL);
+	EV_SET(&ke[1], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 5, NULL);
+
+	if (kevent(kq, ke, 2, NULL, 0, NULL) == -1) {
+		fprintf(stderr, "Failed to create kevent\n");
+		return -1;
+	}
+
+	return 0;
+}
+
+static bool wait_bailout(int fd, int *ret_out)
+{
+	struct kevent ke[2];
+	int ret;
+
+	/* receive an event, a blocking call as timeout is NULL */
+	ret = kevent(kq, NULL, 0, ke, 2, NULL);
+	if (ret == -1) {
+		fprintf(stderr, "kevent() error\n");
+		*ret_out = -1;
+		return true;
+	}
+	/* should be unreachable as timeout is NULL */
+	if (ret == 0) {
+		fprintf(stderr, "kevent() timeout...\n");
+		*ret_out = -1;
+		return true;
+	}
+	for (unsigned i = 0; i < 2; i++) {
+		if (ke[i].ident == fileno(stdin)) {
+			printf("user interrupted!\n");
+			*ret_out = 0;
+			return true;
+		}
+		if (ke[i].ident != fd) {
+			fprintf(stderr, "ke.ident mismatch\n");
+			*ret_out = -1;
+			return true;
+		}
+	}
+
+	return false;
+}
+#else
+#include <sys/select.h>
+
+static int init_wait(int fd)
+{
+	(void) fd;
+	return 0;
+}
 
 static bool wait_bailout(int fd, int *ret_out)
 {
@@ -58,6 +124,7 @@ static bool wait_bailout(int fd, int *ret_out)
 	}
 	return false;
 }
+#endif
 
 static struct drm drm;
 
@@ -81,6 +148,10 @@ static int legacy_run(const struct gbm *gbm, const struct egl *egl)
 	struct drm_fb *fb;
 	uint32_t i = 0;
 	int ret;
+
+	ret = init_wait(drm.fd);
+	if (ret)
+		return ret;
 
 	eglSwapBuffers(egl->display, egl->surface);
 	bo = gbm_surface_lock_front_buffer(gbm->surface);

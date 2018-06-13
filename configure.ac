@@ -49,5 +49,9 @@ if test "x$HAVE_GST" = "xyes"; then
 fi
 AM_CONDITIONAL(ENABLE_GST, [test "x$HAVE_GST" = "xyes"])
 
+# Check for kqueue: if the sys/event.h header is present, perform a check for
+# the kqueue and kevent functions.
+AC_CHECK_HEADER([sys/event.h], [AC_CHECK_FUNCS([kqueue, kevent], AC_DEFINE(USE_KQUEUE, 1))])
+
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
