@@ -29,6 +29,35 @@
 #include "common.h"
 #include "drm-common.h"
 
+static bool wait_bailout(int fd, int *ret_out)
+{
+	fd_set fds;
+	int ret;
+
+	FD_ZERO(&fds);
+	FD_SET(0, &fds);
+	FD_SET(fd, &fds);
+
+	ret = select(fd + 1, &fds, NULL, NULL, NULL);
+	if (ret == -1) {
+		fprintf(stderr, "select err: %s\n", strerror(errno));
+		*ret_out = -1;
+		return true;
+	}
+	/* should be unreachable as timeout is NULL */
+	if (ret == 0) {
+		fprintf(stderr, "select timeout!\n");
+		*ret_out = -1;
+		return true;
+	}
+	if (FD_ISSET(0, &fds)) {
+		printf("user interrupted!\n");
+		*ret_out = 0;
+		return true;
+	}
+	return false;
+}
+
 static struct drm drm;
 
 static void page_flip_handler(int fd, unsigned int frame,
@@ -43,7 +72,6 @@ static void page_flip_handler(int fd, unsigned int frame,
 
 static int legacy_run(const struct gbm *gbm, const struct egl *egl)
 {
-	fd_set fds;
 	drmEventContext evctx = {
 			.version = 2,
 			.page_flip_handler = page_flip_handler,
@@ -96,21 +124,9 @@ static int legacy_run(const struct gbm *gbm, const struct egl *egl)
 		}
 
 		while (waiting_for_flip) {
-			FD_ZERO(&fds);
-			FD_SET(0, &fds);
-			FD_SET(drm.fd, &fds);
-
-			ret = select(drm.fd + 1, &fds, NULL, NULL, NULL);
-			if (ret < 0) {
-				printf("select err: %s\n", strerror(errno));
+			if (wait_bailout(drm.fd, &ret))
 				return ret;
-			} else if (ret == 0) {
-				printf("select timeout!\n");
-				return -1;
-			} else if (FD_ISSET(0, &fds)) {
-				printf("user interrupted!\n");
-				return 0;
-			}
+
 			drmHandleEvent(drm.fd, &evctx);
 		}
 
