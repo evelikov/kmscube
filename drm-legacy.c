@@ -31,14 +31,15 @@
 
 static bool wait_bailout(int fd, int *ret_out)
 {
+#define MAX2(A, B) ((A) > (B) ? (A) : (B))
 	fd_set fds;
-	int ret;
+	int ret, stdin_fileno = fileno(stdin);
 
 	FD_ZERO(&fds);
-	FD_SET(0, &fds);
+	FD_SET(stdin_fileno, &fds);
 	FD_SET(fd, &fds);
 
-	ret = select(fd + 1, &fds, NULL, NULL, NULL);
+	ret = select(MAX2(stdin_fileno, fd) + 1, &fds, NULL, NULL, NULL);
 	if (ret == -1) {
 		fprintf(stderr, "select err: %s\n", strerror(errno));
 		*ret_out = -1;
@@ -46,11 +47,11 @@ static bool wait_bailout(int fd, int *ret_out)
 	}
 	/* should be unreachable as timeout is NULL */
 	if (ret == 0) {
-		fprintf(stderr, "select timeout!\n");
+		printf("select timeout!\n");
 		*ret_out = -1;
 		return true;
 	}
-	if (FD_ISSET(0, &fds)) {
+	if (FD_ISSET(stdin_fileno, &fds)) {
 		printf("user interrupted!\n");
 		*ret_out = 0;
 		return true;
